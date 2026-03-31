@@ -1,0 +1,5 @@
+{
+  "name": "DreamWeaver Bedtime Stories",
+  "description": "An interactive app generating personalized children’s stories with Classic 1990s Disney style illustrations and automated narration.",
+  "requestFramePermissions": ["microphone"]
+}
