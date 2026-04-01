@@ -317,34 +317,32 @@ export default function App() {
           console.log("Uploading audio to Storage...");
           const audioStorageRef = ref(storage, `stories/${user.uid}/${currentStory.createdAt}_audio.pcm`);
           
-          if (audioUrl.startsWith('data:')) {
+          try {
+            // Prepend data URL prefix if it's raw base64
+            const audioDataUrl = audioUrl.startsWith('data:') ? audioUrl : `data:audio/pcm;base64,${audioUrl}`;
+            
+            // Use fetch to convert to blob - more memory efficient for large strings
+            const audioResponse = await fetch(audioDataUrl);
+            const blob = await audioResponse.blob();
+            
+            console.log(`Audio size: ${Math.round(blob.size / 1024)} KB`);
+            
             await withTimeout(
-              uploadString(audioStorageRef, audioUrl, 'data_url'),
-              120000,
+              uploadBytes(audioStorageRef, blob),
+              300000, // Increased to 300s (5 minutes)
               "Audio upload timed out"
             );
-          } else {
-            // Raw base64 - convert to Blob for more reliable upload
-            try {
-              const binary = atob(audioUrl);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i);
-              }
-              const blob = new Blob([bytes], { type: 'audio/pcm' });
-              console.log(`Audio size: ${Math.round(blob.size / 1024)} KB`);
+          } catch (audioErr: any) {
+            console.error("Failed to upload audio via blob, trying fallback", audioErr);
+            if (!audioErr.message?.includes("timed out")) {
+              const format = audioUrl.startsWith('data:') ? 'data_url' : 'base64';
               await withTimeout(
-                uploadBytes(audioStorageRef, blob),
-                120000,
-                "Audio upload timed out"
+                uploadString(audioStorageRef, audioUrl, format),
+                300000,
+                "Audio upload timed out (fallback)"
               );
-            } catch (atobErr) {
-              console.error("Failed to convert base64 to blob, trying uploadString fallback", atobErr);
-              await withTimeout(
-                uploadString(audioStorageRef, audioUrl, 'base64'),
-                120000,
-                "Audio upload timed out"
-              );
+            } else {
+              throw audioErr;
             }
           }
           
@@ -703,9 +701,9 @@ export default function App() {
               className="flex-1 flex flex-col items-center justify-center text-center space-y-8"
             >
               <div className="space-y-4">
-                <h2 className="text-5xl md:text-6xl font-playful tracking-wide leading-tight text-indigo-50">
+                <h2 className="text-3xl md:text-4xl font-playful font-bold tracking-wide leading-tight text-gold">
                   Where Every Night is a <br />
-                  <span className="text-amber-400">New Adventure</span>
+                  New Adventure
                 </h2>
                 <p className="text-indigo-300 text-lg max-w-lg mx-auto">
                   Enter a character, a place, or a dream, and we'll weave a magical story just for you.
