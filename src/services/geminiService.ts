@@ -1,4 +1,4 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, Type } from "@google/genai";
 
 function getAI() {
   // Use process.env.API_KEY which is updated after the user selects a key in the dialog
@@ -6,47 +6,75 @@ function getAI() {
   return new GoogleGenAI({ apiKey });
 }
 
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
   let lastError: any;
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
     } catch (error: any) {
       lastError = error;
-      const errorMsg = error?.message ? String(error.message) : "";
-      const isRetryable = errorMsg.includes("503") || 
-                          error?.status === "UNAVAILABLE" ||
-                          errorMsg.includes("high demand");
+      const errorMsg = error?.message ? String(error.message).toLowerCase() : "";
+      const statusCode = error?.status || error?.code || "";
+      
+      const isRetryable = 
+        errorMsg.includes("503") || 
+        errorMsg.includes("unavailable") ||
+        errorMsg.includes("high demand") ||
+        errorMsg.includes("deadline exceeded") ||
+        statusCode === "UNAVAILABLE" ||
+        statusCode === 503 ||
+        statusCode === 429; // Also retry on rate limits
       
       if (isRetryable && i < maxRetries - 1) {
-        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-        console.warn(`Retrying after ${delay}ms due to high demand (attempt ${i + 1}/${maxRetries})`);
+        // Exponential backoff with jitter: 2s, 4s, 8s, 16s...
+        const delay = Math.pow(2, i + 1) * 1000 + Math.random() * 1000;
+        console.warn(`Gemini API busy (attempt ${i + 1}/${maxRetries}). Retrying in ${Math.round(delay)}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
       throw error;
     }
   }
-  throw lastError || new Error("Retry failed with no error captured");
+  throw lastError || new Error("Retry failed after multiple attempts");
 }
 
-export async function generateStory(theme: string) {
+export async function generateStory(theme: string, language: string = "English") {
   const ai = getAI();
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `Create a 200-300 word bedtime story for children based on the theme: "${theme}". 
     The story should be magical, heartwarming, and suitable for a young audience. 
+    The story MUST be written in ${language}.
     Format the response as JSON with "title" and "content" fields.`,
     config: {
       responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          content: { type: Type.STRING },
+        },
+        required: ["title", "content"],
+      },
     },
   }));
 
+  const text = response.text || "{}";
   try {
-    return JSON.parse(response.text || "{}");
+    // Try direct parse first
+    return JSON.parse(text);
   } catch (e) {
-    console.error("Failed to parse story JSON", e);
-    return { title: "A Magical Tale", content: response.text };
+    console.error("Failed to parse story JSON directly", e);
+    try {
+      // Try to extract JSON from markdown or extra text
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+    } catch (innerE) {
+      console.error("Failed to extract JSON from text", innerE);
+    }
+    return { title: "A Magical Tale", content: text };
   }
 }
 

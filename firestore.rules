@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: stories
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required) - The title of the story.
+    //   - content: string (required) - The full text content of the story.
+    //   - theme: string (required) - The theme or prompt used to generate the story.
+    //   - imageUrl: string (optional) - Base64 encoded image data for the illustration.
+    //   - audioUrl: string (optional) - Base64 encoded audio data for the narration.
+    //   - createdAt: number (required) - Timestamp when the story was created.
+    //   - isFavorite: boolean (optional) - Whether the story is marked as a favorite.
+    //   - uid: string (required) - The UID of the user who owns the story.
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "echolql@gmail.com" && request.auth.token.email_verified == true)); // Default admin
+    }
+
+    function isValidStory(data) {
+      return data.keys().hasAll(['title', 'content', 'theme', 'createdAt', 'uid']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 200000 &&
+             data.theme is string && data.theme.size() > 0 && data.theme.size() < 1000 &&
+             data.createdAt is number &&
+             data.uid is string && data.uid == request.auth.uid &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000)) &&
+             (!('audioUrl' in data) || (data.audioUrl is string && data.audioUrl.size() < 2000)) &&
+             (!('isFavorite' in data) || data.isFavorite is bool);
+    }
+
+    match /stories/{storyId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidStory(request.resource.data);
+      allow update: if isDocOwner() && 
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      (
+                        isValidStory(request.resource.data) ||
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isFavorite'])
+                      );
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && 
+                              (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
+    }
+  }
+}

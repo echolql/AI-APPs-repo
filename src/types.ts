@@ -7,4 +7,5 @@ export interface Story {
   theme: string;
   createdAt: number;
   isFavorite?: boolean;
+  uid: string;
 }
